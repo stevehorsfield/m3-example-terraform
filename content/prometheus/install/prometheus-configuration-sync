@@ -1,0 +1,24 @@
+#!/bin/bash
+set -eo pipefail
+
+export AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+# BUG in AWS S3 SYNC: https://github.com/aws/aws-cli/issues/3273
+# this fails:
+#     aws s3 sync s3://example-system-configuration-us-east-1/prometheus/configuration /etc/prometheus
+# this works:
+
+rm -fR /var/tmp/prometheus-config
+mkdir -p /var/tmp/prometheus-config
+
+cp -R /etc/prometheus/* /var/tmp/prometheus-config
+
+aws s3 cp --recursive s3://example-system-configuration-us-east-1/prometheus/configuration /var/tmp/prometheus-config
+aws s3 sync --delete s3://example-system-configuration-us-east-1/prometheus/configuration /var/tmp/prometheus-config
+
+mv /var/tmp/prometheus-config/prometheus.yml /var/tmp/prometheus-config/prometheus.yml.original
+TRANSFORM_CMD="$(cat /var/tmp/prometheus-config/transform.jq)"
+yq --yaml-output "$TRANSFORM_CMD" \
+  < "/var/tmp/prometheus-config/prometheus.yml.original" \
+  > "/var/tmp/prometheus-config/prometheus.yml"
+
+rsync --quiet --checksum --delete --recursive /var/tmp/prometheus-config/* /etc/prometheus/

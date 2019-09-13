@@ -1,0 +1,28 @@
+[Unit]
+Description=M3DB time-series metrics database storage engine
+After=multi-user.target hostname-manager.service
+Wants=network-online.target
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=15
+
+ExecStartPre=/opt/filesystem-tools/format-if-empty /dev/xvdb ext4
+ExecStartPre=/opt/filesystem-tools/check-and-mount /dev/xvdb /var/lib/m3-data "-- -p"
+ExecStartPre=/bin/mkdir -p /var/lib/m3-data/data
+ExecStartPre=/bin/mkdir -p /var/lib/m3kv
+ExecStartPre=/bin/chown m3data:m3data /var/lib/m3-data
+ExecStartPre=/bin/chown m3data:m3data /var/lib/m3-data/data
+ExecStartPre=/bin/chown m3data:m3data /var/lib/m3kv
+
+PermissionsStartOnly=true
+User=m3data
+
+LimitNOFILE=3000000
+
+ExecStart=/opt/m3/m3dbnode -f /etc/m3/m3data-config.yml
+
+[Install]
+WantedBy=multi-user.target

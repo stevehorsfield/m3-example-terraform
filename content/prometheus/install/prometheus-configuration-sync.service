@@ -1,0 +1,9 @@
+[Unit]
+Description=sync prometheus configuration
+
+[Service]
+Type=oneshot
+ExecStart=/opt/prometheus/prometheus-configuration-sync
+
+[Install]
+# Not installed, executed by timer

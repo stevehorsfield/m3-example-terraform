@@ -1,0 +1,30 @@
+[Unit]
+Description=M3 etcd cluster snapshot creation
+After=multi-user.target m3-etcd.service
+
+[Service]
+Type=oneshot
+
+PermissionsStartOnly=true
+User=m3etcd
+
+ExecStartPre=/opt/filesystem-tools/check-and-mount /dev/xvdb /var/lib/m3-etcd-data
+ExecStartPre=/bin/mkdir -p /var/lib/m3-etcd-data/snapshots
+ExecStartPre=/bin/chown -R m3etcd:m3etcd /var/lib/m3-etcd-data/snapshots
+
+Environment=ETCD_UNSUPPORTED_ARCH=arm64
+Environment=ETCDCTL_API=3
+Environment=ETCDCTL_INSECURE_SKIP_TLS_VERIFY=true
+Environment=ETCDCTL_INSECURE_TRANSPORT=false
+
+ExecStart=/opt/etcd/etcdctl \
+  snapshot save \
+  /var/lib/m3-etcd-data/snapshots/inprogress.snapshot
+
+# Ensure atomic snapshot to support EBS volume snapshots
+ExecStartPost=/bin/ln -f -T \
+  /var/lib/m3-etcd-data/snapshots/inprogress.snapshot \
+  /var/lib/m3-etcd-data/snapshots/latest.snapshot
+
+[Install]
+# Not installed, executed by timer

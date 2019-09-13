@@ -1,0 +1,11 @@
+[Unit]
+Description=M3 etcd cluster snapshot creation every hour
+After=multi-user.target m3-etcd.service
+
+[Timer]
+OnCalendar=*-*-* *:00:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=multi-user.target

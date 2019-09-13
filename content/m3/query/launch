@@ -1,0 +1,126 @@
+#!/bin/bash
+
+ETCD_RELEASE_S3_URI="$1"
+M3_RELEASE_S3_URI="$2"
+M3_QUERY_CONFIG_S3_URI="$3"
+NODE_EXPORTER_RELEASE_S3_URI="$4"
+NODE_EXPORTER_INSTALLATION_FILES_S3_URI="$5"
+UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI="$6"
+
+yum install -y docker jq bind-utils
+
+# Record a savepoint for yum rollback
+YUM_LATEST_TRANSACTION="$(yum history info |grep '^Transaction ID :' | head -n 1 |awk '{print $4}')"
+
+# Download binaries
+yum install -y awscli
+
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+export AWS_DEFAULT_REGION
+
+mkdir -p /var/tmp/downloads
+aws s3 cp "${ETCD_RELEASE_S3_URI}" /var/tmp/downloads/etcd.tar.gz
+aws s3 cp "${M3_RELEASE_S3_URI}" /var/tmp/downloads/m3.tar.gz
+
+mkdir -p /opt/etcd
+tar -C /opt/etcd --strip-components=1 -zxf /var/tmp/downloads/etcd.tar.gz
+
+mkdir -p /opt/m3
+tar -C /opt/m3 --strip-components=1 -zxf /var/tmp/downloads/m3.tar.gz
+
+mkdir -p /var/tmp/downloads/node-exporter
+aws s3 cp "${NODE_EXPORTER_RELEASE_S3_URI}" /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+aws s3 cp --recursive "${NODE_EXPORTER_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/node-exporter
+
+mkdir -p /var/tmp/downloads/update-auto-reboot
+aws s3 cp --recursive "${UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/update-auto-reboot
+chmod 0544 /var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+/var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+
+# Download configs
+
+mkdir -p /etc/m3
+aws s3 cp "${M3_QUERY_CONFIG_S3_URI}" /etc/m3/m3query-config.yml
+
+# Rollback to remove awscli and dependencies
+yum history rollback -y "$YUM_LATEST_TRANSACTION"
+
+# Install etcd client
+
+groupadd \
+  --gid 2380 \
+  m3etcd
+
+adduser \
+  --no-create-home \
+  --uid 2380 \
+  --no-user-group \
+  --gid 2380 \
+  --shell /bin/false \
+  m3etcd
+
+chown -R m3etcd:m3etcd /opt/etcd
+
+echo "ETCDCTL_API=3" >> /etc/environment
+echo "ETCDCTL_INSECURE_SKIP_TLS_VERIFY=true" >> /etc/environment
+echo "ETCDCTL_INSECURE_TRANSPORT=false" >> /etc/environment
+
+# Install M3 query engine
+
+groupadd \
+  --gid 14003 \
+  m3query
+
+adduser \
+  --no-create-home \
+  --uid 14003 \
+  --no-user-group \
+  --gid 14003 \
+  --shell /bin/false \
+  m3query
+
+chown -R m3query:m3query /opt/m3
+
+HOST_IPV4="$(curl --silent --fail http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+cat <<EOF >/etc/systemd/system/m3-query.service
+[Unit]
+Description=M3DB time-series metrics database query engine
+After=multi-user.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=15
+
+ExecStartPre=/bin/mkdir -p /var/lib/m3kv
+ExecStartPre=/bin/chown m3query:m3query /var/lib/m3kv
+
+PermissionsStartOnly=true
+User=m3query
+
+ExecStart=/opt/m3/m3query -f /etc/m3/m3query-config.yml
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# HACKS: node-exporter expects a hostname to have been applied
+# We don't apply a custom hostname to these machines and so the hostname-manager service doesn't create the marker file
+mkdir -p /etc/hostname-manager
+echo "Not required" > /etc/hostname-manager/configured-ok
+
+# NODE_EXPORTER INSTALLATION
+chmod 0544 /var/tmp/downloads/node-exporter/node-exporter-install
+/var/tmp/downloads/node-exporter/node-exporter-install /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+
+# Finishing
+systemctl enable docker.service
+systemctl enable m3-query.service
+
+systemctl daemon-reload
+
+systemctl start --no-block docker.service
+systemctl start --no-block m3-query.service
+systemctl start --no-block node-exporter.service

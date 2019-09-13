@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+SOURCE_DEVICE="$1"
+FILESYSTEM="$2"
+
+if [[ ! -e "$SOURCE_DEVICE" ]] ; then
+  echo "Block device "$SOURCE_DEVICE" is not present (yet)" 1>&2
+  exit 1
+fi
+
+FSTYPE="$(lsblk -f "$SOURCE_DEVICE" -J | jq .blockdevices[0].fstype -rM)"
+
+if [[ ! "$FSTYPE" == "null" ]] ; then
+  echo "Filesystem detected on $SOURCE_DEVICE: ${FSTYPE}, skipping format"
+  exit 0
+fi
+
+echo "Formatting $SOURCE_DEVICE as $FILESYSTEM..."
+mkfs -t "$FILESYSTEM" "$SOURCE_DEVICE"
+
+exit 0

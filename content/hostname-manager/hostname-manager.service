@@ -1,0 +1,16 @@
+[Unit]
+Description=apply configured hostname
+After=multi-user.target network-online.target cloud-final.service
+ConditionPathExists=!/etc/hostname-manager/configured-ok
+
+[Service]
+Type=notify
+NotifyAccess=all
+
+Restart=always
+RestartSec=120
+
+ExecStart=/opt/hostname-manager/apply-hostname
+
+[Install]
+WantedBy=multi-user.target

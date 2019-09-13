@@ -1,0 +1,22 @@
+[Unit]
+Description=M3DB time-series metrics database coordinator service
+After=multi-user.target hostname-manager.service
+Before=prometheus.service
+Wants=network-online.target
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=15
+
+ExecStartPre=/bin/mkdir -p /var/lib/m3kv
+ExecStartPre=/bin/chown m3coordinator:m3coordinator /var/lib/m3kv
+
+PermissionsStartOnly=true
+User=m3coordinator
+
+ExecStart=/opt/m3/m3coordinator -f /etc/m3/coordinator-config.yml
+
+[Install]
+WantedBy=multi-user.target prometheus.service

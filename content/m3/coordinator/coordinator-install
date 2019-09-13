@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -eo pipefail
+
+BINARY_PATH="$1"
+INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# M3 COORDINATOR INSTALLATION
+mkdir -p /opt/m3
+tar -C /opt/m3 --strip-components=1 -xzf $BINARY_PATH
+
+groupadd \
+  --gid 7201 \
+  m3coordinator
+
+adduser \
+  --no-create-home \
+  --uid 7201 \
+  --no-user-group \
+  --gid 7201 \
+  --shell /bin/false \
+  m3coordinator
+
+chown -R m3coordinator:m3coordinator /opt/m3
+
+mkdir -p /etc/m3
+
+cp -v $INSTALL_DIR/coordinator-config.yml /etc/m3/coordinator-config.yml
+
+chown -R m3coordinator:m3coordinator /etc/m3
+
+cp -v $INSTALL_DIR/m3-coordinator.service /etc/systemd/system/m3-coordinator.service
+
+systemctl enable m3-coordinator.service
+systemctl start m3-coordinator.service --no-block

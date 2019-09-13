@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# WARNING:
+# M3 mainenance: it is only safe for one node out of a 3-replica set to be offline at any time
+# Changes to this file can cause a Terraform state change affecting the instance
+
+ETCD_RELEASE_S3_URI="$1"
+M3_RELEASE_S3_URI="$2"
+M3_INSTALLATION_FILES_S3_URI="$3"
+NODE_EXPORTER_RELEASE_S3_URI="$4"
+NODE_EXPORTER_INSTALLATION_FILES_S3_URI="$5"
+UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI="$6"
+
+yum install -y docker jq bind-utils
+
+# Record a savepoint for yum rollback
+YUM_LATEST_TRANSACTION="$(yum history info |grep '^Transaction ID :' | head -n 1 |awk '{print $4}')"
+
+# Download binaries
+yum install -y awscli
+
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+export AWS_DEFAULT_REGION
+
+mkdir -p /var/tmp/downloads/m3
+aws s3 cp "${ETCD_RELEASE_S3_URI}" /var/tmp/downloads/m3/etcd.tar.gz
+aws s3 cp "${M3_RELEASE_S3_URI}" /var/tmp/downloads/m3/m3.tar.gz
+aws s3 cp --recursive "${M3_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/m3
+
+mkdir -p /var/tmp/downloads/node-exporter
+aws s3 cp "${NODE_EXPORTER_RELEASE_S3_URI}" /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+aws s3 cp --recursive "${NODE_EXPORTER_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/node-exporter
+
+mkdir -p /var/tmp/downloads/update-auto-reboot
+aws s3 cp --recursive "${UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/update-auto-reboot
+
+# Rollback to remove awscli and dependencies
+yum history rollback -y "$YUM_LATEST_TRANSACTION"
+
+# Install M3 storage engine
+
+# M3 INSTALLATION
+
+chmod 0544 /var/tmp/downloads/m3/install
+/var/tmp/downloads/m3/install /var/tmp/downloads/m3/etcd.tar.gz /var/tmp/downloads/m3/m3.tar.gz
+
+# Install update-auto-reboot
+
+chmod 0544 /var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+/var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+
+# Install node-exporter
+chmod 0544 /var/tmp/downloads/node-exporter/node-exporter-install
+/var/tmp/downloads/node-exporter/node-exporter-install /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+
+# Finishing
+systemctl enable docker.service
+systemctl enable hostname-manager.service
+systemctl enable m3-data.service
+
+systemctl daemon-reload
+
+systemctl start --no-block hostname-manager.service
+systemctl start --no-block docker.service

@@ -1,0 +1,43 @@
+#cloud-config
+repo_upgrade: security
+write_files:
+  # Hostname management
+  - path: "/etc/systemd/system/hostname-manager.service"
+    encoding: b64
+    permissions: 0444
+    content: "${hostname-manager-unit-file}"
+  - path: "/opt/hostname-manager/apply-hostname"
+    encoding: b64
+    permissions: 0544
+    content: "${hostname-manager-apply-hostname-file}"
+  - path: "/etc/hostname-manager/hostname"
+    permissions: 0444
+    content: "${hostname}"
+  # Filesystem utils
+  - path: "/etc/filesystem-tools/ec2-data-volume-id"
+    permissions: 0444
+    content: "${volume-id}"
+  - path: "/opt/filesystem-tools/attach-volume"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-attach-volume-file}"
+  - path: "/opt/filesystem-tools/check-and-mount"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-check-and-mount-file}"
+  - path: "/opt/filesystem-tools/format-if-empty"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-format-if-empty-file}"
+  - path: "/opt/filesystem-tools/create-secret-folder"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-create-secret-folder-file}"
+  # Bootstrap
+  - path: "/tmp/bootstrap-userdata"
+    encoding: b64
+    permissions: 0500
+    content: "${launch-script}"
+runcmd:
+  - [ "/tmp/bootstrap-userdata", "${prometheus-release-s3-uri}", "${prometheus-installation-files-s3-uri}", "${node-exporter-release-s3-uri}", "${node-exporter-installation-files-s3-uri}", "${m3-release-s3-uri}", "${m3-coordinator-installation-files-s3-uri}", "${yq-release-s3-uri}" ]
+  - [ "/usr/bin/yum", "update", "--security", "--assumeyes" ] # Not all seem to get applied automatically

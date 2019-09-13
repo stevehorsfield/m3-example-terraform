@@ -1,0 +1,36 @@
+[Unit]
+Description=Prometheus Agent
+After=multi-user.target hostname-manager.service
+Wants=network-online.target
+# Ensure at least one execution of prometheus-configuration-sync.service so that configuration is available
+Wants=prometheus-configuration-sync.service
+After=prometheus-configuration-sync.service
+# Ensure at least one execution of prometheus-reload.service so that secrets are decoded
+Wants=prometheus-reload.service
+After=prometheus-reload.service
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=15
+
+ExecStartPre=/opt/filesystem-tools/attach-volume
+ExecStartPre=/opt/filesystem-tools/format-if-empty /dev/xvdb ext4
+ExecStartPre=/opt/filesystem-tools/check-and-mount /dev/xvdb /var/lib/prometheus "-- -p"
+ExecStartPre=/bin/chown -R prometheus:prometheus /var/lib/prometheus
+ExecStartPre=/opt/filesystem-tools/create-secret-folder /var/run/prometheus/secrets prometheus prometheus
+
+PermissionsStartOnly=true
+User=prometheus
+
+ExecStart=/opt/prometheus/prometheus \
+      --config.file /etc/prometheus/prometheus.yml \
+      --storage.tsdb.path /var/lib/prometheus/ \
+      --storage.tsdb.retention.time 12h \
+      --web.console.templates=/opt/prometheus/consoles \
+      --web.console.libraries=/opt/prometheus/console_libraries
+
+ExecReload=/bin/kill -HUP $MAINPID
+[Install]
+WantedBy=multi-user.target

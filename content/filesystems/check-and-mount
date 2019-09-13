@@ -1,0 +1,30 @@
+#!/bin/bash
+
+SOURCE_DEVICE="$1"
+MOUNT_LOCATION="$2"
+FSCK_OPTIONS="$3"
+
+set -e
+set -o pipefail
+
+mkdir -p "$MOUNT_LOCATION"
+
+TARGET_DEVICE="$(readlink -f "$SOURCE_DEVICE")" # findmnt uses the canonical device name
+
+MOUNT_DATA="$(findmnt -J --target "$MOUNT_LOCATION")"
+EXISTING_MOUNT_TARGET="$(jq '.filesystems[0].target' -rM <<< "$MOUNT_DATA")"
+EXISTING_MOUNT_DEVICE="$(jq '.filesystems[0].source' -rM <<< "$MOUNT_DATA")"
+
+if [[ ! "$EXISTING_MOUNT_TARGET" == "$MOUNT_LOCATION" ]] ; then
+  echo "Mounting $SOURCE_DEVICE at $MOUNT_LOCATION"
+  fsck $SOURCE_DEVICE $FSCK_OPTIONS
+  mount -t auto $SOURCE_DEVICE $MOUNT_LOCATION
+  exit 0
+fi
+
+if [[ ! "$EXISTING_MOUNT_DEVICE" == "$TARGET_DEVICE" ]] ; then
+  echo "Unexpected device at $MOUNT_LOCATION: $(jq -Mc . <<< "$MOUNT_DATA")" 1>&2
+  exit 1
+fi
+
+echo "$MOUNT_LOCATION already mounted, no action"

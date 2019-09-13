@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+if [[ -e /etc/filesystem-tools/volume-attached-ok ]] ; then
+  exit 0 # Only attach once. Attachments are permanent
+fi
+
+echo "Attempting to attach the data volume..."
+
+VOLUME_ID="$(cat /etc/filesystem-tools/ec2-data-volume-id)"
+INSTANCE_ID="$(curl http://169.254.169.254/latest/meta-data/instance-id --silent --fail)"
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+
+export AWS_DEFAULT_REGION
+
+aws ec2 attach-volume --instance-id "$INSTANCE_ID" --volume-id "$VOLUME_ID" --device "/dev/xvdb"
+
+echo "Attached data volume"
+
+touch /etc/filesystem-tools/volume-attached-ok
+
+exit 0

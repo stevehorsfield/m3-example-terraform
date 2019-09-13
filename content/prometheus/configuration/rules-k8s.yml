@@ -1,0 +1,14 @@
+groups:
+- name: k8s.rules
+  rules:
+  - expr: |
+      sum(rate(container_cpu_usage_seconds_total{job=~"kubernetes:cadvisor:.*", image!="", container_name!=""}[5m])) by (environment,namespace)
+    record: environment_namespace:container_cpu_usage_seconds_total:sum_rate5m
+  - expr: |
+      sum by (environment, namespace, pod_name, container_name) (
+        rate(container_cpu_usage_seconds_total{job=~"kubernetes:cadvisor:.*", image!="", container_name!=""}[5m])
+      )
+    record: environment_namespace_pod_name_container_name:container_cpu_usage_seconds_total:sum_rate5m
+  - expr: |
+      sum(container_memory_usage_bytes{job=~"kubernetes:cadvisor:.*", image!="", container_name!=""}) by (environment,namespace)
+    record: environment_namespace:container_memory_usage_bytes:sum

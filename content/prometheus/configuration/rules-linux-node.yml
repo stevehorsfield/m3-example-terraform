@@ -1,0 +1,15 @@
+groups:
+- name: linux-node.rules
+  rules:
+  - expr: |
+      sum without(mode)(rate(node_cpu_seconds_total{job=~"node-exporter:.*",mode!~"idle|steal"}[1m]))
+    record: without_mode:node_cpu_seconds_total:sum_rate1m_usage
+  - expr: |
+      sum without(mode)(rate(node_cpu_seconds_total{job=~"node-exporter:.*",mode!~"steal"}[1m]))
+    record: without_mode:node_cpu_seconds_total:sum_rate1m_total
+  - expr: |
+      sum without(cpu)(without_mode:node_cpu_seconds_total:sum_rate1m_usage)
+    record: without_mode_cpu:node_cpu_seconds_total:sum_rate1m_usage
+  - expr: |
+      sum without(cpu)(without_mode:node_cpu_seconds_total:sum_rate1m_total)
+    record: without_mode_cpu:node_cpu_seconds_total:sum_rate1m_total

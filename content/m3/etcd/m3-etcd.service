@@ -1,0 +1,43 @@
+[Unit]
+Description=etcd cluster for M3DB time-series metrics database
+After=multi-user.target hostname-manager.service
+Wants=network-online.target
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=notify
+Restart=always
+RestartSec=15
+
+ExecStartPre=/opt/filesystem-tools/format-if-empty /dev/xvdb ext4
+ExecStartPre=/opt/filesystem-tools/check-and-mount /dev/xvdb /var/lib/m3-etcd-data "-- -p"
+ExecStartPre=/bin/mkdir -p /var/lib/m3-etcd-data/data
+ExecStartPre=/bin/chown -R m3etcd:m3etcd /var/lib/m3-etcd-data
+
+PermissionsStartOnly=true
+User=m3etcd
+
+Environment=ETCD_UNSUPPORTED_ARCH=arm64
+
+EnvironmentFile=/etc/m3/m3-etcd.env
+
+# Automatic TLS for client access is not compatible with M3 TLS configuration options
+ExecStart=/opt/etcd/etcd \
+  --name %H \
+  --listen-peer-urls "https://0.0.0.0:2380" \
+  --listen-client-urls "http://0.0.0.0:2379" \
+  --advertise-client-urls "http://${HOST_IPV4}:2379" \
+  --peer-auto-tls \
+  --heartbeat-interval=500 \
+  --election-timeout=5000 \
+  --data-dir /var/lib/m3-etcd-data/data \
+  --auto-compaction-mode periodic \
+  --auto-compaction-retention 60m \
+  --enable-v2=false \
+  --initial-advertise-peer-urls "https://${HOST_IPV4}:2380" \
+  --initial-cluster-token "${ETCD_CLUSTER_TOKEN}" \
+  --initial-cluster "${ETCD_CLUSTER_SPEC}" \
+  --initial-cluster-state new
+
+[Install]
+WantedBy=multi-user.target

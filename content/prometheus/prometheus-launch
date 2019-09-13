@@ -1,0 +1,51 @@
+#!/bin/bash
+
+set -eo pipefail
+
+PROMETHEUS_RELEASE_S3_URI="$1"
+PROMETHEUS_INSTALLATION_FILES_S3_URI="$2"
+NODE_EXPORTER_RELEASE_S3_URI="$3"
+NODE_EXPORTER_INSTALLATION_FILES_S3_URI="$4"
+M3_RELEASE_S3_URI="$5"
+M3_COORDINATOR_INSTALLATION_FILES_S3_URI="$6"
+YQ_RELEASE_S3_URI="$7"
+
+yum install -y docker jq python3 # python3 required for yq YAML processor
+
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+export AWS_DEFAULT_REGION
+
+# M3 INSTALLATION
+mkdir -p /var/tmp/downloads/m3
+aws s3 cp "${M3_RELEASE_S3_URI}" /var/tmp/downloads/m3/m3.tar.gz
+
+mkdir -p /etc/m3
+aws s3 cp --recursive "${M3_COORDINATOR_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/m3
+chmod 0544 /var/tmp/downloads/m3/coordinator-install
+/var/tmp/downloads/m3/coordinator-install /var/tmp/downloads/m3/m3.tar.gz
+
+# YQ INSTALLATION
+mkdir -p /var/tmp/downloads/yq
+aws s3 cp "${YQ_RELEASE_S3_URI}" "/var/tmp/downloads/yq/yq.tgz"
+(cd /var/tmp/downloads/yq ; tar zxf yq.tgz)
+pip3 install --no-index --find-links=/var/tmp/downloads/yq yq==2.7.2
+
+# PROMETHEUS INSTALLATION
+mkdir -p /var/tmp/downloads/prometheus
+aws s3 cp "${PROMETHEUS_RELEASE_S3_URI}" /var/tmp/downloads/prometheus/prometheus.tar.gz
+aws s3 cp --recursive "${PROMETHEUS_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/prometheus
+chmod 0544 /var/tmp/downloads/prometheus/prometheus-install
+/var/tmp/downloads/prometheus/prometheus-install /var/tmp/downloads/prometheus/prometheus.tar.gz
+
+# NODE_EXPORTER INSTALLATION
+mkdir -p /var/tmp/downloads/node-exporter
+aws s3 cp "${NODE_EXPORTER_RELEASE_S3_URI}" /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+aws s3 cp --recursive "${NODE_EXPORTER_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/node-exporter
+chmod 0544 /var/tmp/downloads/node-exporter/node-exporter-install
+/var/tmp/downloads/node-exporter/node-exporter-install /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+
+systemctl enable hostname-manager.service
+systemctl enable docker.service
+
+systemctl start --no-block hostname-manager.service
+systemctl start --no-block docker.service

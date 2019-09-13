@@ -1,0 +1,92 @@
+#!/bin/bash
+
+ETCD_RELEASE_S3_URI="$1"
+ETCD_CLUSTER_SPEC="$2"
+ETCD_CLUSTER_TOKEN="$3"
+ETCD_INSTALLATION_FILES_S3_URI="$4"
+NODE_EXPORTER_RELEASE_S3_URI="$5"
+NODE_EXPORTER_INSTALLATION_FILES_S3_URI="$6"
+UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI="$7"
+
+yum install -y docker jq bind-utils yum-utils
+
+# Record a savepoint for yum rollback
+YUM_LATEST_TRANSACTION="$(yum history info |grep '^Transaction ID :' | head -n 1 |awk '{print $4}')"
+
+# Download binaries
+yum install -y awscli
+
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+export AWS_DEFAULT_REGION
+
+mkdir -p /var/tmp/downloads
+aws s3 cp "${ETCD_RELEASE_S3_URI}" /var/tmp/downloads/etcd.tar.gz
+
+mkdir -p /opt/etcd
+tar -C /opt/etcd --strip-components=1 -zxf /var/tmp/downloads/etcd.tar.gz
+
+mkdir -p /var/tmp/downloads/m3-etcd
+aws s3 cp --recursive "${ETCD_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/m3-etcd
+
+mkdir -p /var/tmp/downloads/node-exporter
+aws s3 cp "${NODE_EXPORTER_RELEASE_S3_URI}" /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+aws s3 cp --recursive "${NODE_EXPORTER_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/node-exporter
+
+mkdir -p /var/tmp/downloads/update-auto-reboot
+aws s3 cp --recursive "${UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/update-auto-reboot
+chmod 0544 /var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+/var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+
+# Rollback to remove awscli and dependencies
+yum history rollback -y "$YUM_LATEST_TRANSACTION"
+
+# Install etcd
+
+groupadd \
+  --gid 2380 \
+  m3etcd
+
+adduser \
+  --no-create-home \
+  --uid 2380 \
+  --no-user-group \
+  --gid 2380 \
+  --shell /bin/false \
+  m3etcd
+
+chown -R m3etcd:m3etcd /opt/etcd
+
+HOST_IPV4="$(curl --silent --fail http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+mkdir -p /etc/m3
+
+cat <<EOF >/etc/m3/m3-etcd.env
+HOST_IPV4=${HOST_IPV4}
+ETCD_CLUSTER_TOKEN=${ETCD_CLUSTER_TOKEN}
+ETCD_CLUSTER_SPEC=${ETCD_CLUSTER_SPEC}
+EOF
+
+cp /var/tmp/downloads/m3-etcd/m3-etcd.service /etc/systemd/system/
+cp /var/tmp/downloads/m3-etcd/m3-etcd-snapshot.service /etc/systemd/system/
+cp /var/tmp/downloads/m3-etcd/m3-etcd-snapshot.timer /etc/systemd/system/
+
+echo "ETCD_UNSUPPORTED_ARCH=arm64" >> /etc/environment
+echo "ETCDCTL_API=3" >> /etc/environment
+echo "ETCDCTL_INSECURE_SKIP_TLS_VERIFY=true" >> /etc/environment
+echo "ETCDCTL_INSECURE_TRANSPORT=false" >> /etc/environment
+
+# NODE_EXPORTER INSTALLATION
+chmod 0544 /var/tmp/downloads/node-exporter/node-exporter-install
+/var/tmp/downloads/node-exporter/node-exporter-install /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+
+systemctl enable docker.service
+systemctl enable hostname-manager.service
+systemctl enable m3-etcd.service
+systemctl enable m3-etcd-snapshot.timer
+
+systemctl daemon-reload
+
+systemctl start --no-block hostname-manager.service
+systemctl start --no-block docker.service
+systemctl start --no-block m3-etcd.service
+systemctl start --no-block m3-etcd-snapshot.timer

@@ -1,0 +1,20 @@
+#cloud-config
+repo_upgrade: security
+write_files:
+  - path: "/etc/grafana/grafana-postgres-secret.env"
+    permissions: 0444
+    owner: root:root
+    content: |
+      # Cipher text created by: aws kms encrypt --key-id "alias/example-secrets" --plaintext fileb://<(cat secret-text | base64 --wrap=0) --region us-east-1 --encryption-context "Application=grafana,SecretName=some-secret-name"
+      # Cipher text decoded by: aws kms decrypt --region us-east-1 --ciphertext-blob fileb://<(base64 --decode <<< 'encrypt ciphertext output here') --encryption-context "Application=grafana,SecretName=some-secret-name" --query Plaintext --output text | base64 --decode | base64 --decode
+      KMS_ENCRYPTION_CONTEXT=Application=grafana,SecretName=some-secret-name
+      KMS_CIPHERTEXT=some-kms-ciphertext
+      KMS_REGION=${kms_region}
+  # Bootstrap
+  - path: "/tmp/bootstrap-userdata"
+    encoding: b64
+    permissions: 0500
+    content: "${launch-script}"
+runcmd:
+  - [ "/tmp/bootstrap-userdata", "${grafana-release-s3-uri}", "${grafana-config-s3-uri}", "${node_exporter-release-s3-uri}", "${node-exporter-installation-files-s3-uri}", "${update-auto-reboot-installation-files-s3-uri}" ]
+  - [ "/usr/bin/yum", "update", "--security", "--assumeyes" ] # Not all seem to get applied automatically

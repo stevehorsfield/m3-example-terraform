@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger prometheus configuration synchronisation every 30 seconds
+
+[Timer]
+OnActiveSec=0
+OnUnitActiveSec=30
+AccuracySec=1ms
+Persistent=true
+
+[Install]
+WantedBy=multi-user.target

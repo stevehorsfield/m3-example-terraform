@@ -1,0 +1,62 @@
+# WARNING:
+# M3 mainenance: it is only safe for one node out of a 3-replica set to be offline at any time
+# Changes to this file can cause a Terraform state change affecting the instance
+
+# Coordinator on data nodes is only intended to be used for cluster configuration tasks
+
+# Address for M3Coordinator to listen for traffic.
+listenAddress:
+  type: "config"
+  value: "0.0.0.0:7201"
+
+# Configuration for emitting M3Coordinator metrics.
+metrics:
+  scope:
+    # Prefix to apply to all metrics.
+    prefix: "coordinator"
+  prometheus:
+    # Path and address to expose Prometheus scrape endpoint.
+    handlerPath: /metrics
+    listenAddress: 0.0.0.0:7203 # until https://github.com/m3db/m3/issues/682 is resolved
+  sanitization: prometheus
+  # Sampling rate for metrics, use 1.0 for no sampling.
+  samplingRate: 1.0
+  extended: none
+
+limits:
+  maxComputedDatapoints: 10000
+
+tagOptions:
+  # Configuration setting for generating metric IDs from tags.
+  idScheme: quoted
+
+clusters:
+- namespaces:
+  # Bootstrap (once only) with:
+  # curl -XPOST http://localhost:7201/api/v1/database/namespace/create -d '{"namespaceName": "default", "retentionTime": "792h"}'
+  - namespace: default
+    retention: 792h
+    type: unaggregated
+  - namespace: agg_100days_1h
+    retention: 2400h
+    resolution: 1h
+    type: aggregated
+  - namespace: agg_1year_4h
+    retention: 8760h
+    resolution: 4h
+    type: aggregated
+  client:
+    config:
+      service:
+        env: default_env
+        zone: embedded
+        service: m3db
+        cacheDir: /var/lib/m3coordinator-m3kv
+        etcdClusters:
+        - zone: embedded
+          endpoints:
+          - ${etcd-hostip0}:2379
+          - ${etcd-hostip1}:2379
+          - ${etcd-hostip2}:2379
+    writeConsistencyLevel: majority
+    readConsistencyLevel: unstrict_majority

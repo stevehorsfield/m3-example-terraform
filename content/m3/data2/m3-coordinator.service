@@ -1,0 +1,17 @@
+[Unit]
+Description=M3DB time-series metrics database coordinator service
+After=multi-user.target hostname-manager.service
+Wants=network-online.target
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=simple
+Restart=no
+
+ExecStartPre=/bin/mkdir -p /var/lib/m3coordinator-m3kv
+ExecStartPre=/bin/chown m3data:m3data /var/lib/m3coordinator-m3kv
+
+PermissionsStartOnly=true
+User=m3data
+
+ExecStart=/opt/m3/m3coordinator -f /etc/m3/m3coordinator-config.yml

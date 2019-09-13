@@ -1,0 +1,9 @@
+[Unit]
+Description=Monitor the prometheus configuration file
+
+[Path]
+# Watch for any change to the /etc/prometheus folder
+PathModified=/etc/prometheus/
+
+[Install]
+WantedBy=multi-user.target

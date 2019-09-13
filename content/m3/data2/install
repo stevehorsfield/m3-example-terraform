@@ -1,0 +1,73 @@
+#!/bin/bash
+
+set -eo pipefail
+
+ETCD_BINARY_PATH="$1"
+M3_BINARY_PATH="$2"
+
+INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# etcd client installation
+
+groupadd \
+  --gid 2380 \
+  m3etcd
+
+adduser \
+  --no-create-home \
+  --uid 2380 \
+  --no-user-group \
+  --gid 2380 \
+  --shell /bin/false \
+  m3etcd
+
+mkdir -p /opt/etcd
+tar -C /opt/etcd --strip-components=1 -zxf "$ETCD_BINARY_PATH"
+
+chown -R m3etcd:m3etcd /opt/etcd
+
+echo "ETCDCTL_API=3" >> /etc/environment
+echo "ETCDCTL_INSECURE_SKIP_TLS_VERIFY=true" >> /etc/environment
+echo "ETCDCTL_INSECURE_TRANSPORT=false" >> /etc/environment
+
+# M3 data node installation
+
+groupadd \
+  --gid 14003 \
+  m3data
+
+adduser \
+  --no-create-home \
+  --uid 14003 \
+  --no-user-group \
+  --gid 14003 \
+  --shell /bin/false \
+  m3data
+
+mkdir -p /opt/m3
+tar -C /opt/m3 --strip-components=1 -xzf "$M3_BINARY_PATH"
+
+chown -R m3data:m3data /opt/m3
+
+cp -v "$INSTALL_DIR/m3-coordinator.service" /etc/systemd/system
+cp -v "$INSTALL_DIR/m3-data.service" /etc/systemd/system
+
+mkdir -p /etc/m3
+cp -v "$INSTALL_DIR/config.yml" /etc/m3/m3data-config.yml
+cp -v "$INSTALL_DIR/coordinator-config.yml" /etc/m3/m3coordinator-config.yml
+
+# Kernel parameters
+echo "vm.max_map_count=3000000" >> /etc/sysctl.d/50-m3data.conf
+sysctl -w vm.max_map_count=3000000
+
+echo "vm.swappiness=1" >> /etc/sysctl.d/50-m3data.conf
+sysctl -w vm.swappiness=1
+
+echo "fs.file-max=3000000" >> /etc/sysctl.d/50-m3data.conf
+sysctl -w fs.file-max=3000000
+
+echo "fs.nr_open=3000000" >> /etc/sysctl.d/50-m3data.conf
+sysctl -w fs.nr_open=3000000
+
+systemctl enable m3-data.service
+systemctl start --no-block m3-data.service

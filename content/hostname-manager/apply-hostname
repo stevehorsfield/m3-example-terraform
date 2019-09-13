@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -e
+
+CURRENT_HOSTNAME="$(hostname)"
+
+HOSTNAME_TARGET="$( \
+  cat /etc/hostname-manager/hostname \
+  | grep -v 's/^[ \t]*#' \
+  | grep -v 's/^[ \t]*$' \
+  | head -n 1 \
+  | sed -e 's/\.$//' # remove trailing '.' if present
+  )"
+
+if [[ "$HOSTNAME_TARGET" == "" ]] ; then
+  echo 'No hostname configured'
+
+  if [[ ! "$NOTIFY_SOCKET" == "" ]] ; then
+    systemd-notify --ready
+    sleep 2 # allow systemd to track the notify back to this service
+  fi
+  exit 0
+fi
+
+if [[ "$HOSTNAME_TARGET" == "$CURRENT_HOSTNAME" ]] ; then
+  touch /etc/hostname-manager/configured-ok
+  systemctl daemon-reload # prevents additional executions
+
+  if [[ ! "$NOTIFY_SOCKET" == "" ]] ; then
+    systemd-notify --ready
+    sleep 2 # allow systemd to track the notify back to this service
+  fi
+  exit 0
+fi
+
+echo "Adjusting hostname from '$CURRENT_HOSTNAME' to '$HOSTNAME_TARGET'"
+hostnamectl set-hostname "$HOSTNAME_TARGET"
+reboot # required for changes to take effect

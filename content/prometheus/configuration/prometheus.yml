@@ -1,0 +1,212 @@
+++templates:
+  list-segments:
+    ec2-discovery-relabel-configs:
+      - target_label: ec2_availability_zone
+        source_labels: [__meta_ec2_availability_zone]
+        action: replace
+      - target_label: ec2_instance_id
+        source_labels: [__meta_ec2_instance_id]
+        action: replace
+      - target_label: environment
+        source_labels: [__meta_ec2_tag_Environment]
+        action: replace
+      - target_label: application
+        source_labels: [__meta_ec2_tag_Application]
+        action: replace
+    environment-relabel-configs:
+      - target_label: environment
+        source_labels: [environment]
+        action: replace
+        regex: ".*dev.*"
+        replacement: "development"
+      - target_label: environment
+        source_labels: [environment]
+        action: replace
+        regex: ".*example.*"
+        replacement: "example"
+    cadvisor-systemd-metric-relabel-configs:
+      - action: drop
+        source_labels: [id]
+        regex: "/system.slice/.*"
+      - action: drop
+        source_labels: [container_name]
+        regex: "POD"
+
+# my global config
+global:
+  scrape_interval:     15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+- rules-k8s.yml
+- rules-linux-node.yml
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  - job_name: 'node-exporter:ec2-discovery'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    ec2_sd_configs:
+    - port: 9100
+      filters:
+      - name: 'tag:prometheus.scraping.node-exporter.port'
+        values: ['9100']
+    - port: 9100
+      filters:
+      - name: 'tag:prometheus.scraping.node-exporter.port'
+        values: ['9100']
+      role_arn: '${production-discovery-role-arn}'
+    relabel_configs:
+    - ++template-placeholder-list-segment: "ec2-discovery-relabel-configs"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'prometheus:ec2-discovery'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    ec2_sd_configs:
+    - port: 9090
+      filters:
+      - name: 'tag:prometheus.scraping.prometheus.port'
+        values: ['9090']
+    relabel_configs:
+    - ++template-placeholder-list-segment: "ec2-discovery-relabel-configs"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'etcd:ec2-discovery'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    ec2_sd_configs:
+    - port: 2379
+      filters:
+      - name: 'tag:prometheus.scraping.etcd.port'
+        values: ['2379']
+    relabel_configs:
+    - ++template-placeholder-list-segment: "ec2-discovery-relabel-configs"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'm3:ec2-discovery'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    ec2_sd_configs:
+    - port: 9004
+      filters:
+      - name: 'tag:prometheus.scraping.m3.port'
+        values: ['9004']
+    - port: 7203
+      filters:
+      - name: 'tag:prometheus.scraping.m3.port'
+        values: ['7203']
+    relabel_configs:
+    - ++template-placeholder-list-segment: "ec2-discovery-relabel-configs"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'grafana:ec2-discovery'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    ec2_sd_configs:
+      - port: 3000
+        filters:
+          - name: 'tag:prometheus.scraping.grafana.port'
+            values: ['3000']
+    relabel_configs:
+    - ++template-placeholder-list-segment: "ec2-discovery-relabel-configs"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'kube-state-metrics'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    static_configs:
+    - targets:
+      - "kube-state-metrics.example.com:15000"
+      labels:
+        environment: 'dev'
+    relabel_configs:
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'kubernetes:apiserver:dev' # Jobs cannot be shared across clusters due to auth differences
+    # Scrape target authentication
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/kubernetes-ca-dev.pem
+      server_name: ${kubernetes-dev-api-endpoint-name}
+    bearer_token_file: /var/run/prometheus/secrets/kubernetes-dev-scrape-token
+
+    static_configs:
+    - targets: ["${kubernetes-dev-api-proxy-address}:443"]
+      labels:
+        environment: 'dev'
+
+    relabel_configs:
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+
+  - job_name: 'kubernetes:kubelet:dev' # Jobs cannot be shared across clusters due to auth differences
+    # Scrape target authentication
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/kubernetes-ca-dev.pem
+      server_name: ${kubernetes-dev-api-endpoint-name}
+    bearer_token_file: /var/run/prometheus/secrets/kubernetes-dev-scrape-token
+
+    kubernetes_sd_configs:
+    - api_server: "https://${kubernetes-dev-api-proxy-address}"
+      role: node
+      bearer_token_file: /var/run/prometheus/secrets/kubernetes-dev-scrape-token
+      # Discovery authentication against API Server
+      tls_config:
+        ca_file: /etc/prometheus/kubernetes-ca-dev.pem
+        server_name: ${kubernetes-dev-api-endpoint-name}
+    
+    relabel_configs:
+    - target_label: __address__
+      replacement: "${kubernetes-dev-api-proxy-address}:443" # Proxied via API server
+    - target_label: __metrics_path__
+      source_labels: [__meta_kubernetes_node_name]
+      regex: (.+)
+      replacement: /api/v1/nodes/$${1}/proxy/metrics
+    - target_label: environment
+      replacement: "dev"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+  - job_name: 'kubernetes:cadvisor:dev' # Jobs cannot be shared across clusters due to auth differences
+    # Scrape target authentication
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/kubernetes-ca-dev.pem
+      server_name: ${kubernetes-dev-api-endpoint-name}
+    bearer_token_file: /var/run/prometheus/secrets/kubernetes-dev-scrape-token
+
+    kubernetes_sd_configs:
+    - api_server: "https://${kubernetes-dev-api-proxy-address}"
+      role: node
+      bearer_token_file: /var/run/prometheus/secrets/kubernetes-dev-scrape-token
+      # Discovery authentication against API Server
+      tls_config:
+        ca_file: /etc/prometheus/kubernetes-ca-dev.pem
+        server_name: ${kubernetes-dev-api-endpoint-name}
+    
+    relabel_configs:
+    - target_label: __address__
+      replacement: "${kubernetes-dev-api-proxy-address}:443" # Proxied via API server
+    - target_label: __metrics_path__
+      source_labels: [__meta_kubernetes_node_name]
+      regex: (.+)
+      replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
+    - target_label: environment
+      replacement: "dev"
+    - ++template-placeholder-list-segment: "environment-relabel-configs"
+    
+    metric_relabel_configs:
+    - ++template-placeholder-list-segment: "cadvisor-systemd-metric-relabel-configs"
+
+# M3 integration
+remote_read:
+  - url: "http://localhost:7201/api/v1/prom/remote/read"
+    # To test reading even when local Prometheus has the data
+    read_recent: false
+remote_write:
+  - url: "http://localhost:7201/api/v1/prom/remote/write"
+    write_relabel_configs:
+    - ++template-placeholder-list-segment: "environment-relabel-configs"

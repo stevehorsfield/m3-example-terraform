@@ -1,0 +1,38 @@
+#cloud-config
+
+# WARNING:
+# M3 mainenance: it is only safe for one node out of a 3-replica set to be offline at any time
+# Changes to this file can cause a Terraform state change affecting the instance
+
+repo_upgrade: security
+write_files:
+  # Hostname management
+  - path: "/etc/systemd/system/hostname-manager.service"
+    encoding: b64
+    permissions: 0444
+    content: "${hostname-manager-unit-file}"
+  - path: "/opt/hostname-manager/apply-hostname"
+    encoding: b64
+    permissions: 0544
+    content: "${hostname-manager-apply-hostname-file}"
+  - path: "/etc/hostname-manager/hostname"
+    permissions: 0444
+    content: "${hostname}"
+  # Filesystem utils
+  - path: "/opt/filesystem-tools/check-and-mount"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-check-and-mount-file}"
+  - path: "/opt/filesystem-tools/format-if-empty"
+    encoding: b64
+    permissions: 0544
+    content: "${filesystems-format-if-empty-file}"
+  # Bootstrap
+  - path: "/tmp/bootstrap-userdata"
+    encoding: b64
+    permissions: 0500
+    content: "${launch-script}"
+runcmd:
+  - [ "/tmp/bootstrap-userdata", "${etcd-release-s3-uri}", "${m3-release-s3-uri}", "${m3-installation-files-s3-uri}", "${node-exporter-release-s3-uri}", "${node-exporter-installation-files-s3-uri}", "${update-auto-reboot-installation-files-s3-uri}" ]
+  - [ "/usr/bin/yum", "update", "--security", "--assumeyes" ] # Not all seem to get applied automatically
+

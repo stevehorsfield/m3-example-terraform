@@ -1,0 +1,19 @@
+[Unit]
+Description=Restart prometheus when the configuration has been changed
+After=multi-user.target network-online.target
+ConditionPathExists=/etc/hostname-manager/configured-ok
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=15
+ExecStartPre=/opt/filesystem-tools/create-secret-folder /var/run/prometheus/secrets prometheus prometheus
+
+EnvironmentFile=/etc/prometheus/prometheus-secrets.env
+ExecStartPre=/opt/prometheus/decode-secrets
+
+ExecStart=-/bin/systemctl reload prometheus.service --no-block
+
+[Install]
+# Needed on each boot to decode KMS secrets to ramfs
+WantedBy=multi-user.target

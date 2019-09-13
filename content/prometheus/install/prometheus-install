@@ -1,0 +1,51 @@
+#!/bin/bash
+
+set -eo pipefail
+
+BINARY_PATH="$1"
+INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# install prometheus binary and sync scripts
+mkdir -p /opt/prometheus
+tar -C /opt/prometheus --strip-components=1 -xzf $BINARY_PATH
+cp -vf $INSTALL_DIR/prometheus-configuration-sync /opt/prometheus/prometheus-configuration-sync
+cp -vf $INSTALL_DIR/decode-secrets /opt/prometheus/decode-secrets
+chmod 0544 /opt/prometheus/prometheus-configuration-sync
+chmod 0544 /opt/prometheus/decode-secrets
+
+# copy the prometheus systemd files into the /etc/systemd/system
+cp -vf $INSTALL_DIR/prometheus.service /etc/systemd/system/prometheus.service
+cp -vf $INSTALL_DIR/prometheus-configuration-sync.service /etc/systemd/system/prometheus-configuration-sync.service
+cp -vf $INSTALL_DIR/prometheus-configuration-sync.timer /etc/systemd/system/prometheus-configuration-sync.timer
+cp -vf $INSTALL_DIR/prometheus-reload.service /etc/systemd/system/prometheus-reload.service
+cp -vf $INSTALL_DIR/prometheus-reload.path /etc/systemd/system/prometheus-reload.path
+
+# install configuration file
+mkdir -p /etc/prometheus
+cp -vf $INSTALL_DIR/configuration/prometheus.yml /etc/prometheus/prometheus.yml
+
+groupadd \
+  --gid 9090 \
+  prometheus
+
+adduser \
+  --no-create-home \
+  --uid 9090 \
+  --no-user-group \
+  --gid 9090 \
+  --shell /bin/false \
+  prometheus
+
+chown -R prometheus:prometheus /opt/prometheus
+chmod 0444 /etc/prometheus/prometheus.yml
+
+systemctl enable prometheus.service
+systemctl enable prometheus-configuration-sync.service
+systemctl enable prometheus-configuration-sync.timer
+systemctl enable prometheus-reload.service
+systemctl enable prometheus-reload.path
+
+systemctl start --no-block prometheus-reload.service # Needed to decode initial secrets
+systemctl start --no-block prometheus.service
+systemctl start --no-block prometheus-configuration-sync.timer
+systemctl start --no-block prometheus-reload.path

@@ -1,0 +1,125 @@
+#!/bin/bash
+
+GRAFANA_RELEASE_S3_URI="$1"
+GRAFANA_CONFIGURATION_S3_URI="$2"
+NODE_EXPORTER_RELEASE_S3_URI="$3"
+NODE_EXPORTER_INSTALLATION_FILES_S3_URI="$4"
+UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI="$5"
+
+yum install -y docker jq bind-utils
+
+# Record a savepoint for yum rollback
+YUM_LATEST_TRANSACTION="$(yum history info |grep '^Transaction ID :' | head -n 1 |awk '{print $4}')"
+
+# Download binaries
+yum install -y awscli
+
+AWS_DEFAULT_REGION="$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --fail | jq .region -rM)"
+export AWS_DEFAULT_REGION
+
+mkdir -p /var/tmp/downloads/node-exporter
+aws s3 cp "${NODE_EXPORTER_RELEASE_S3_URI}" /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+aws s3 cp --recursive "${NODE_EXPORTER_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/node-exporter
+
+mkdir -p /var/tmp/downloads/update-auto-reboot
+aws s3 cp --recursive "${UPDATE_AUTO_REBOOT_INSTALLATION_FILES_S3_URI}" /var/tmp/downloads/update-auto-reboot
+chmod 0544 /var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+/var/tmp/downloads/update-auto-reboot/update-auto-reboot-install
+
+mkdir -p /var/tmp/downloads/grafana
+aws s3 cp "${GRAFANA_RELEASE_S3_URI}" /var/tmp/downloads/grafana/grafana.tar.gz
+aws s3 cp "${GRAFANA_CONFIGURATION_S3_URI}" /var/tmp/downloads/grafana/grafana.ini
+
+mkdir -p /opt/grafana
+mkdir -p /etc/grafana
+tar -C /opt/grafana --strip-components=1 -xzf /var/tmp/downloads/grafana/grafana.tar.gz
+cp -vf /var/tmp/downloads/grafana/grafana.ini /etc/grafana/grafana.ini.original
+
+mkdir -p /var/lib/grafana
+mkdir -p /var/run/grafana/config
+
+groupadd \
+  --gid 3000 \
+  grafana
+
+adduser \
+  --no-create-home \
+  --uid 3000 \
+  --no-user-group \
+  --gid 3000 \
+  --shell /bin/false \
+  grafana
+
+chown -R grafana:grafana /opt/grafana
+chown -R grafana:grafana /etc/grafana
+chown -R grafana:grafana /var/lib/grafana
+chown -R grafana:grafana /var/run/grafana/config
+
+cat <<EOF > /opt/grafana/mount-configuration
+#!/bin/bash
+
+set -ueo pipefail
+
+mkdir -p /var/run/grafana/config
+mount -t ramfs -o size=1m grafana /var/run/grafana/config
+
+POSTGRES_PASSWORD=\$(aws kms decrypt --region "\${KMS_REGION}" \
+  --encryption-context "\${KMS_ENCRYPTION_CONTEXT}" \
+  --query Plaintext --output text \
+  --ciphertext-blob fileb://<(base64 --decode <<< "\${KMS_CIPHERTEXT}") \
+| base64 --decode \
+| base64 --decode)
+
+cp /etc/grafana/grafana.ini.original /var/run/grafana/config/grafana.ini
+sed -i "s/__POSTGRES_PASSWORD__/\${POSTGRES_PASSWORD}/" /var/run/grafana/config/grafana.ini
+chown -R grafana:grafana /var/run/grafana/config/
+
+chmod 0400 /var/run/grafana/config/grafana.ini
+
+EOF
+
+chmod 0544 /opt/grafana/mount-configuration
+
+cat <<EOF >/etc/systemd/system/grafana.service
+[Unit]
+Description=Grafana UI Interface
+After=multi-user.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=15
+
+User=grafana
+EnvironmentFile=/etc/grafana/grafana-postgres-secret.env
+ExecStartPre=/opt/grafana/mount-configuration
+PermissionsStartOnly=true
+
+WorkingDirectory=/opt/grafana
+ExecStart=/opt/grafana/bin/grafana-server  \\
+          --config /var/run/grafana/config/grafana.ini \\
+          --homepath /opt/grafana
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# HACKS: node-exporter expects a hostname to have been applied
+# We don't apply a custom hostname to these machines and so the hostname-manager service doesn't create the marker file
+mkdir -p /etc/hostname-manager
+echo "Not required" > /etc/hostname-manager/configured-ok
+
+# NODE_EXPORTER INSTALLATION
+chmod 0544 /var/tmp/downloads/node-exporter/node-exporter-install
+/var/tmp/downloads/node-exporter/node-exporter-install /var/tmp/downloads/node-exporter/node_exporter.tar.gz
+
+# Finishing
+systemctl enable docker.service
+systemctl enable grafana.service
+
+systemctl daemon-reload
+
+systemctl start --no-block docker.service
+systemctl start --no-block grafana.service
+systemctl start --no-block node-exporter.service
